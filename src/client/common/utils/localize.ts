@@ -64,6 +64,7 @@ export namespace DataScience {
     export const pythonVersionHeader = localize('DataScience.pythonVersionHeader', 'Python Version:');
     export const pythonRestartHeader = localize('DataScience.pythonRestartHeader', 'Restarted Kernel:');
     export const pythonVersionHeaderNoPyKernel = localize('DataScience.pythonVersionHeaderNoPyKernel', 'Python Version may not match, no ipykernel found:');
+    export const jupyterNotebookFailure = localize('DataScience.jupyterNotebookFailure', 'Jupyter notebook failed to launch\r\n{0}');
 }
 
 // Skip using vscode-nls and instead just compute our strings based on key values. Key values

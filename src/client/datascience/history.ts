@@ -365,7 +365,7 @@ export class History implements IWebPanelMessageListener, IHistory {
                 this.applicationShell.showInformationMessage(localize.DataScience.exportDialogComplete().format(file), localize.DataScience.exportOpenQuestion()).then((str : string | undefined) => {
                     if (str && file && this.jupyterServer) {
                         // If the user wants to, open the notebook they just generated.
-                        this.jupyterServer.launchNotebook(file).ignoreErrors();
+                        this.jupyterExecution.spawnNotebook(file).ignoreErrors();
                     }
                 });
             } catch (exc) {
@@ -379,7 +379,7 @@ export class History implements IWebPanelMessageListener, IHistory {
         // Startup our jupyter server
         const status = this.setStatus(localize.DataScience.startingJupyter());
         try {
-            await this.jupyterServer.start();
+            this.jupyterServer = await this.jupyterExecution.startNotebookServer();
 
             // If this is a restart, show our restart info
             if (restart) {
