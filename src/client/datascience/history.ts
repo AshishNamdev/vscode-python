@@ -449,7 +449,7 @@ export class History implements IWebPanelMessageListener, IHistory {
 
     private addInitialSysInfo = async () : Promise<void> => {
         // Message depends upon if ipykernel is supported or not.
-        if (!(await this.jupyterExecution.isipykernelSupported())) {
+        if (!(await this.jupyterExecution.isKernelCreateSupported())) {
             return this.addSysInfo(localize.DataScience.pythonVersionHeaderNoPyKernel());
         }
 

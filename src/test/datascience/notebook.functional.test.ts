@@ -237,7 +237,10 @@ suite('Jupyter notebook tests', () => {
         try {
             await fs.writeFile(temp.filePath, JSON.stringify(notebook), 'utf8');
             // Try importing this. This should verify export works and that importing is possible
-            await importer.importFromFile(temp.filePath);
+            const results = await importer.importFromFile(temp.filePath);
+
+            // Make sure we have a cell in our results
+            assert.ok(/#\s*%%/.test(results), 'No cells in returned import');
         } finally {
             importer.dispose();
             temp.dispose();
@@ -345,5 +348,8 @@ plt.show()`,
     // Test to write after jupyter process abstraction
     // - jupyter not installed
     // - kernel spec not matching
+    // - ipykernel not installed
+    // - kernelspec not installed
+    // - startup / shutdown / restart - make uses same kernelspec. Actually should be in memory already
 
 });

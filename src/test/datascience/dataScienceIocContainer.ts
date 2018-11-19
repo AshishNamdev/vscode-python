@@ -3,7 +3,8 @@
 'use strict';
 import * as child_process from 'child_process';
 import * as TypeMoq from 'typemoq';
-import { EventEmitter, Uri, WorkspaceConfiguration } from 'vscode';
+import * as path from 'path';
+import { Event, EventEmitter, Uri, WorkspaceConfiguration, FileSystemWatcher, Disposable } from 'vscode';
 
 import { IApplicationShell, IDocumentManager, IWorkspaceService } from '../../client/common/application/types';
 import { CurrentProcess } from '../../client/common/process/currentProcess';
@@ -26,7 +27,7 @@ import {
     INotebookServer,
     IStatusProvider
 } from '../../client/datascience/types';
-import { ICondaService, IInterpreterService, IKnownSearchPathsForInterpreters, IInterpreterLocatorService, INTERPRETER_LOCATOR_SERVICE, IInterpreterHelper, IInterpreterLocatorHelper, IInterpreterVersionService, CONDA_ENV_FILE_SERVICE, CONDA_ENV_SERVICE, CURRENT_PATH_SERVICE, GLOBAL_VIRTUAL_ENV_SERVICE, WORKSPACE_VIRTUAL_ENV_SERVICE, PIPENV_SERVICE, WINDOWS_REGISTRY_SERVICE, KNOWN_PATH_SERVICE } from '../../client/interpreter/contracts';
+import { ICondaService, IInterpreterService, IKnownSearchPathsForInterpreters, IInterpreterLocatorService, INTERPRETER_LOCATOR_SERVICE, IInterpreterHelper, IInterpreterLocatorHelper, IInterpreterVersionService, CONDA_ENV_FILE_SERVICE, CONDA_ENV_SERVICE, CURRENT_PATH_SERVICE, GLOBAL_VIRTUAL_ENV_SERVICE, WORKSPACE_VIRTUAL_ENV_SERVICE, PIPENV_SERVICE, WINDOWS_REGISTRY_SERVICE, KNOWN_PATH_SERVICE, IVirtualEnvironmentsSearchPathProvider, IPipEnvService, IInterpreterWatcher, IInterpreterWatcherBuilder } from '../../client/interpreter/contracts';
 import { KnownSearchPathsForInterpreters, KnownPathsService } from '../../client/interpreter/locators/services/KnownPathsService';
 import { UnitTestIocContainer } from '../unittests/serviceRegistry';
 import { MockPythonExecutionService } from './executionServiceMock';
@@ -50,8 +51,8 @@ import { BufferDecoder } from '../../client/common/process/decoder';
 import { CondaEnvFileService } from '../../client/interpreter/locators/services/condaEnvFileService';
 import { CondaEnvService } from '../../client/interpreter/locators/services/condaEnvService';
 import { CurrentPathService } from '../../client/interpreter/locators/services/currentPathService';
-import { GlobalVirtualEnvService } from '../../client/interpreter/locators/services/globalVirtualEnvService';
-import { WorkspaceVirtualEnvService } from '../../client/interpreter/locators/services/workspaceVirtualEnvService';
+import { GlobalVirtualEnvService, GlobalVirtualEnvironmentsSearchPathProvider } from '../../client/interpreter/locators/services/globalVirtualEnvService';
+import { WorkspaceVirtualEnvService, WorkspaceVirtualEnvironmentsSearchPathProvider } from '../../client/interpreter/locators/services/workspaceVirtualEnvService';
 import { PipEnvService } from '../../client/interpreter/locators/services/pipEnvService';
 import { ConfigurationService } from '../../client/common/configuration/service';
 import { SystemVariables } from '../../client/common/variables/systemVariables';
@@ -61,6 +62,15 @@ import { IPlatformService, IRegistry, IFileSystem } from '../../client/common/pl
 import { RegistryImplementation } from '../../client/common/platform/registry';
 import { PlatformService } from '../../client/common/platform/platformService';
 import { FileSystem } from '../../client/common/platform/fileSystem';
+import { IVirtualEnvironmentManager } from '../../client/interpreter/virtualEnvs/types';
+import { VirtualEnvironmentManager } from '../../client/interpreter/virtualEnvs';
+import { WorkspaceVirtualEnvWatcherService } from '../../client/interpreter/locators/services/workspaceVirtualEnvWatcherService';
+import { InterpreterWatcherBuilder } from '../../client/interpreter/locators/services/interpreterWatcherBuilder';
+import { noop } from '../../client/common/utils/misc';
+import { ITerminalActivationCommandProvider } from '../../client/common/terminal/types';
+import { Bash } from '../../client/common/terminal/environmentActivationProviders/bash';
+import { CommandPromptAndPowerShell } from '../../client/common/terminal/environmentActivationProviders/commandPrompt';
+import { PyEnvActivationCommandProvider } from '../../client/common/terminal/environmentActivationProviders/pyenvActivationProvider';
 
 export class DataScienceIocContainer extends UnitTestIocContainer {
     constructor() {
@@ -94,13 +104,27 @@ export class DataScienceIocContainer extends UnitTestIocContainer {
             .returns(() => undefined);
         workspaceConfig.setup(ws => ws.get(TypeMoq.It.isAnyString(), TypeMoq.It.isAny()))
             .returns((s, d) => d);
-        const workspace: TypeMoq.IMock<IWorkspaceService> = TypeMoq.Mock.ofType<IWorkspaceService>();
-        workspace.setup(
-            w => w.getConfiguration(
-                TypeMoq.It.isValue('python'),
-                TypeMoq.It.isAny()
-            ))
-            .returns(() => workspaceConfig.object);
+        class MockFileSystemWatcher implements FileSystemWatcher {
+            ignoreCreateEvents: boolean;
+            ignoreChangeEvents: boolean;
+            ignoreDeleteEvents: boolean;
+            public onDidCreate(_listener: (e: Uri) => any, _thisArgs?: any, _disposables?: Disposable[]): Disposable {
+                return { dispose: noop };
+            }
+            onDidChange: Event<Uri>;
+            onDidDelete: Event<Uri>;
+            dispose() {
+                undefined;
+            }
+        };
+        workspaceService.setup(w => w.createFileSystemWatcher(TypeMoq.It.isAny(), TypeMoq.It.isAny(), TypeMoq.It.isAny(), TypeMoq.It.isAny())).returns(() => {
+            return new MockFileSystemWatcher();
+        });
+        workspaceService
+        .setup(w => w.hasWorkspaceFolders)
+        .returns(() => false);
+        workspaceService.setup(w => w.rootPath).returns(() => '~');
+
 
         const systemVariables: SystemVariables = new SystemVariables(undefined);
         const env = {...systemVariables};
@@ -108,9 +132,19 @@ export class DataScienceIocContainer extends UnitTestIocContainer {
         // Look on the path for python
         let pythonPath = this.findPythonPath();
         pythonSettings.setup(p => p.pythonPath).returns(() => pythonPath);
+        const folders = ['Envs', '.virtualenvs'];
+        pythonSettings.setup(x => x.venvFolders).returns(() => folders);
+        pythonSettings.setup(x => x.venvPath).returns(() => path.join('~', 'foo'));
+
+        condaService.setup(c => c.isCondaAvailable()).returns(() => Promise.resolve(false));
+        condaService.setup(c => c.isCondaEnvironment(TypeMoq.It.isValue(pythonPath))).returns(() => Promise.resolve(false));
+        condaService.setup(c => c.condaEnvironmentsFile).returns(() => undefined);
 
         const envVarsProvider: TypeMoq.IMock<IEnvironmentVariablesProvider> = TypeMoq.Mock.ofType<IEnvironmentVariablesProvider>();
         envVarsProvider.setup(e => e.getEnvironmentVariables(TypeMoq.It.isAny())).returns(() => Promise.resolve(env));
+        this.serviceManager.addSingleton<IVirtualEnvironmentsSearchPathProvider>(IVirtualEnvironmentsSearchPathProvider, GlobalVirtualEnvironmentsSearchPathProvider, 'global');
+        this.serviceManager.addSingleton<IVirtualEnvironmentsSearchPathProvider>(IVirtualEnvironmentsSearchPathProvider, WorkspaceVirtualEnvironmentsSearchPathProvider, 'workspace');
+        this.serviceManager.addSingleton<IVirtualEnvironmentManager>(IVirtualEnvironmentManager, VirtualEnvironmentManager);
 
 
         this.serviceManager.addSingletonInstance<ILogger>(ILogger, logger.object);
@@ -130,6 +164,9 @@ export class DataScienceIocContainer extends UnitTestIocContainer {
         this.serviceManager.addSingletonInstance<boolean>(IsWindows, IS_WINDOWS);
         this.serviceManager.addSingletonInstance<boolean>(Is64Bit, IS_64_BIT);
 
+        this.serviceManager.add<IInterpreterWatcher>(IInterpreterWatcher, WorkspaceVirtualEnvWatcherService, WORKSPACE_VIRTUAL_ENV_SERVICE);
+        this.serviceManager.addSingleton<IInterpreterWatcherBuilder>(IInterpreterWatcherBuilder, InterpreterWatcherBuilder);
+
         this.serviceManager.addSingleton<IInterpreterLocatorService>(IInterpreterLocatorService, PythonInterpreterLocatorService, INTERPRETER_LOCATOR_SERVICE);
         this.serviceManager.addSingleton<IInterpreterLocatorService>(IInterpreterLocatorService, CondaEnvFileService, CONDA_ENV_FILE_SERVICE);
         this.serviceManager.addSingleton<IInterpreterLocatorService>(IInterpreterLocatorService, CondaEnvService, CONDA_ENV_SERVICE);
@@ -137,6 +174,7 @@ export class DataScienceIocContainer extends UnitTestIocContainer {
         this.serviceManager.addSingleton<IInterpreterLocatorService>(IInterpreterLocatorService, GlobalVirtualEnvService, GLOBAL_VIRTUAL_ENV_SERVICE);
         this.serviceManager.addSingleton<IInterpreterLocatorService>(IInterpreterLocatorService, WorkspaceVirtualEnvService, WORKSPACE_VIRTUAL_ENV_SERVICE);
         this.serviceManager.addSingleton<IInterpreterLocatorService>(IInterpreterLocatorService, PipEnvService, PIPENV_SERVICE);
+        this.serviceManager.addSingleton<IInterpreterLocatorService>(IPipEnvService, PipEnvService);
 
         const isWindows = this.serviceManager.get<boolean>(IsWindows);
         if (isWindows) {
@@ -156,6 +194,12 @@ export class DataScienceIocContainer extends UnitTestIocContainer {
         if (this.serviceManager.get<IPlatformService>(IPlatformService).isWindows) {
             this.serviceManager.addSingleton<IRegistry>(IRegistry, RegistryImplementation);
         }
+        this.serviceManager.addSingleton<ITerminalActivationCommandProvider>(
+            ITerminalActivationCommandProvider, Bash, 'bashCShellFish');
+            this.serviceManager.addSingleton<ITerminalActivationCommandProvider>(
+            ITerminalActivationCommandProvider, CommandPromptAndPowerShell, 'commandPromptAndPowerShell');
+            this.serviceManager.addSingleton<ITerminalActivationCommandProvider>(
+            ITerminalActivationCommandProvider, PyEnvActivationCommandProvider, 'pyenv');
 
 
         const dummyDisposable = {

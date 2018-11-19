@@ -32,21 +32,21 @@ export interface IConnection extends Disposable {
 export const INotebookServer = Symbol('INotebookServer');
 export interface INotebookServer extends Disposable {
     onStatusChanged: Event<boolean>;
-    connect(conninfo: IConnection, kernelSpec: IJupyterKernelSpec) : Promise<void>;
+    connect(conninfo: IConnection, kernelSpec: IJupyterKernelSpec, notebookFile: string) : Promise<void>;
     getCurrentState() : Promise<ICell[]>;
     executeObservable(code: string, file: string, line: number) : Observable<ICell[]>;
     execute(code: string, file: string, line: number) : Promise<ICell[]>;
     restartKernel() : Promise<void>;
     translateToNotebook(cells: ICell[]) : Promise<JSONObject | undefined>;
     waitForIdle() : Promise<void>;
-    shutdown();
+    shutdown() : Promise<void>;
 }
 
 export const IJupyterExecution = Symbol('IJupyterExecution');
 export interface IJupyterExecution {
     isNotebookSupported() : Promise<boolean>;
     isImportSupported() : Promise<boolean>;
-    isipykernelSupported(): Promise<boolean>;
+    isKernelCreateSupported(): Promise<boolean>;
     startNotebookServer() : Promise<INotebookServer>;
     spawnNotebook(file: string) : Promise<void>;
     importNotebook(file: string, template: string) : Promise<string>;

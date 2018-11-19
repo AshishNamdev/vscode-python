@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 'use strict';
 import { ChildProcess } from 'child_process';
-import tk from 'tree-kill';
+import * as tk from 'tree-kill';
 import { Disposable } from 'vscode-jsonrpc';
 
 import { ObservableExecutionResult, Output } from '../common/process/types';
@@ -86,6 +86,7 @@ export class JupyterConnection implements IConnection {
 
         // If we have a match, resolve the waiting promise
         if (urlMatch && urlMatch != null && urlMatch.length > 0 && waitingPromise) {
+            var URL = require('url').URL;
             const url = new URL(urlMatch[0]);
             waitingPromise.resolve(new JupyterConnection(`${url.protocol}//${url.host}/`,  `${url.searchParams.get('token')}`, pythonVersion, disposable));
         }

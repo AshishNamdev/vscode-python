@@ -31,7 +31,10 @@ import { IConnection, IJupyterExecution, IJupyterKernelSpec, INotebookServer } f
 import { fsReaddirAsync } from '../common/utils/fs';
 
 const CheckJupyterRegEx = IS_WINDOWS ? /^jupyter?\.exe$/ : /^jupyter?$/;
-
+const NotebookCommand = 'notebook';
+const ConvertCommand = 'nbconvert';
+const KernelSpecCommand = 'kernelspec';
+const KernelCreateCommand = 'ipykernel';
 
 class JupyterKernelSpec implements IJupyterKernelSpec {
     public name: string;
@@ -130,27 +133,27 @@ export class JupyterExecution implements IJupyterExecution, Disposable {
 
     public isNotebookSupported = (): Promise<boolean> => {
         // See if we can find the command notebook
-        return this.isCommandSupported('notebook');
+        return this.isCommandSupported(NotebookCommand);
     }
 
     public isImportSupported = async (): Promise<boolean> => {
         // See if we can find the command nbconvert
-        return this.isCommandSupported('nbconvert');
+        return this.isCommandSupported(ConvertCommand);
     }
 
-    public isipykernelSupported = async (): Promise<boolean> => {
+    public isKernelCreateSupported = async (): Promise<boolean> => {
         // See if we can find the command ipykernel
-        return this.isCommandSupported('ipykernel');
+        return this.isCommandSupported(KernelCreateCommand);
     }
 
     public isKernelSpecSupported = async (): Promise<boolean> => {
         // See if we can find the command kernelspec
-        return this.isCommandSupported('kernelspec');
+        return this.isCommandSupported(KernelSpecCommand);
     }
 
     public startNotebookServer = async () : Promise<INotebookServer> => {
         // First we find a way to start a notebook server
-        const notebookCommand = await this.findBestCommand('notebook');
+        const notebookCommand = await this.findBestCommand(NotebookCommand);
         if (!notebookCommand) {
             throw new Error(localize.DataScience.jupyterNotSupported());
         }
@@ -182,7 +185,7 @@ export class JupyterExecution implements IJupyterExecution, Disposable {
             // Then use this to connect to the jupyter process
             const result = this.serviceContainer.get<INotebookServer>(INotebookServer);
             this.disposableRegistry.push(result);
-            await result.connect(connection, kernelSpec);
+            await result.connect(connection, kernelSpec, tempFile);
             return result;
 
         } catch (err) {
@@ -206,7 +209,7 @@ export class JupyterExecution implements IJupyterExecution, Disposable {
 
     public importNotebook = async (file: string, template: string) : Promise<string> => {
         // First we find a way to start a nbconvert
-        const convert = await this.findBestCommand('nbconvert');
+        const convert = await this.findBestCommand(ConvertCommand);
         if (!convert) {
             throw new Error(localize.DataScience.jupyterNbConvertNotSupported());
         }
@@ -214,7 +217,11 @@ export class JupyterExecution implements IJupyterExecution, Disposable {
         const args: string [] = [`--NotebookApp.file_to_run=${file}`];
 
         // Wait for the nbconvert to finish
-        const result = await convert.exec([file, '--to', 'python', '--stdout', '--template', template], { throwOnStdErr: true, encoding: 'utf8' });
+        const result = await convert.exec([file, '--to', 'python', '--stdout', '--template', template], { throwOnStdErr: false, encoding: 'utf8' });
+        if (result.stderr) {
+            // Stderr on nbconvert doesn't indicate failure. Just log the result
+            this.logger.logInformation(result.stderr);
+        }
         return result.stdout;
     }
 
@@ -231,9 +238,9 @@ export class JupyterExecution implements IJupyterExecution, Disposable {
             // one of them already matches based on path
             if (!await this.hasSpecPathMatch()) {
                 // Nobody matches on path, so generate a new kernel spec
-                if (await this.isipykernelSupported()) {
+                if (await this.isKernelCreateSupported()) {
                     const displayName = localize.DataScience.historyTitle();
-                    const ipykernelCommand = await this.findBestCommand('ipykernel');
+                    const ipykernelCommand = await this.findBestCommand(KernelCreateCommand);
                     try {
                         const uuid = await import('uuid/v4');
                         const name = uuid.default();
@@ -284,7 +291,7 @@ export class JupyterExecution implements IJupyterExecution, Disposable {
     private isCommandSupported = async (command: string) : Promise<boolean> => {
         // See if we can find the command
         try {
-            const result = this.findBestCommand(command);
+            const result = await this.findBestCommand(command);
             return result !== undefined;
         } catch (err) {
             this.logger.logWarning(err);
@@ -423,7 +430,7 @@ export class JupyterExecution implements IJupyterExecution, Disposable {
 
     private enumerateSpecs = async () : Promise<IJupyterKernelSpec[]> => {
         if (await this.isKernelSpecSupported()) {
-            const kernelSpecCommand = await this.findBestCommand('kernelspec');
+            const kernelSpecCommand = await this.findBestCommand(KernelSpecCommand);
 
             // Ask for our current list.
             const list = await kernelSpecCommand.exec(['list'], { throwOnStdErr: true, encoding: 'utf8' });
@@ -460,7 +467,11 @@ export class JupyterExecution implements IJupyterExecution, Disposable {
         if (interpreter && await this.doesModuleExist(command, interpreter)) {
             // We need a process service to create a command
             const processService = await this.processServicePromise;
-            return new JupyterCommand(interpreter.path, [command], processService, this.interpreterService, this.condaService);
+
+            // Our command args are different based on the command. ipykernel is not a jupyter command
+            const args = command === KernelCreateCommand ? ['-m', command] : ['-m', 'jupyter', command];
+
+            return new JupyterCommand(interpreter.path, args, processService, this.interpreterService, this.condaService);
         }
 
         return undefined;
@@ -552,7 +563,11 @@ export class JupyterExecution implements IJupyterExecution, Disposable {
         newOptions.env = await this.fixupCondaEnv(newOptions.env);
         const pythonService = await this.executionFactory.create({ pythonPath: interpreter.path });
         try {
-            const result = await pythonService.execModule(module, ['--version'], newOptions);
+            // Special case for ipykernel
+            const actualModule = module === KernelCreateCommand ? module : 'jupyter';
+            const args = module === KernelCreateCommand ? ['--version'] : [module, '--version'];
+
+            const result = await pythonService.execModule(actualModule, args, newOptions);
             return !result.stderr;
         } catch (err) {
             this.logger.logWarning(err);

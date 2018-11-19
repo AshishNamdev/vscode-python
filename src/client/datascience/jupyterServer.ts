@@ -19,6 +19,7 @@ import { createDeferred } from '../common/utils/async';
 import * as localize from '../common/utils/localize';
 import { RegExpValues } from './constants';
 import { CellState, ICell, IConnection, IJupyterKernelSpec, INotebookServer } from './types';
+import { noop } from '../common/utils/misc';
 
 // This code is based on the examples here:
 // https://www.npmjs.com/package/@jupyterlab/services
@@ -30,7 +31,6 @@ export class JupyterServer implements INotebookServer {
     private session: Session.ISession | undefined;
     private sessionManager : SessionManager | undefined;
     private sessionStartTime: number | undefined;
-    private tempFile: string | undefined;
     private onStatusChangedEvent : vscode.EventEmitter<boolean> = new vscode.EventEmitter<boolean>();
 
     constructor(
@@ -38,7 +38,7 @@ export class JupyterServer implements INotebookServer {
         @inject(IWorkspaceService) private workspaceService: IWorkspaceService) {
     }
 
-    public connect = async (connInfo: IConnection, kernelSpec: IJupyterKernelSpec) : Promise<void> => {
+    public connect = async (connInfo: IConnection, kernelSpec: IJupyterKernelSpec, notebookFile: string) : Promise<void> => {
         // Save connection information so we can use it later during shutdown
         this.connInfo = connInfo;
 
@@ -57,7 +57,7 @@ export class JupyterServer implements INotebookServer {
 
         // Create our session options using this temporary notebook and our connection info
         const options: Session.IOptions = {
-            path: this.tempFile,
+            path: notebookFile,
             kernelName: kernelSpec ? kernelSpec.name : '',
             serverSettings: serverSettings
         };
@@ -86,12 +86,18 @@ export class JupyterServer implements INotebookServer {
         ).ignoreErrors();
     }
 
-    public shutdown = () => {
+    public shutdown = async () : Promise<void> => {
         if (this.session && this.sessionManager) {
-            this.session.dispose();
-            this.sessionManager.dispose();
+            try {
+                await this.sessionManager.shutdownAll();
+                this.session.dispose();
+                this.sessionManager.dispose();
+            } catch {
+                noop;
+            }
             this.session = undefined;
             this.sessionManager = undefined;
+
         }
         if (this.connInfo) {
             this.connInfo.dispose(); // This should kill the process that's running
@@ -208,12 +214,14 @@ export class JupyterServer implements INotebookServer {
         return this.onStatusChangedEvent.event.bind(this.onStatusChangedEvent);
     }
 
-    public dispose = () => {
+    public dispose = () : Promise<void> => {
         if (!this.isDisposed) {
             this.isDisposed = true;
             this.onStatusChangedEvent.dispose();
-            this.shutdown();
+            return this.shutdown();
         }
+
+        return Promise.resolve();
     }
 
     public restartKernel = async () : Promise<void> => {
