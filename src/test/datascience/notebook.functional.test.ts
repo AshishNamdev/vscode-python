@@ -351,5 +351,7 @@ plt.show()`,
     // - ipykernel not installed
     // - kernelspec not installed
     // - startup / shutdown / restart - make uses same kernelspec. Actually should be in memory already
+    // - Starting with python that doesn't have jupyter and make sure it can switch to one that does
+    // - Starting with python that doesn't have jupyter and make sure the switch still uses the original python as the kernel
 
 });

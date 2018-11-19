@@ -9,6 +9,7 @@ import { CodeLens, CodeLensProvider, Disposable, Event, Range, TextDocument, Tex
 
 import { ICommandManager } from '../common/application/types';
 import { ExecutionResult, ObservableExecutionResult, PythonVersionInfo, SpawnOptions } from '../common/process/types';
+import { PythonInterpreter } from '../interpreter/contracts';
 
 // Main interface
 export const IDataScience = Symbol('IDataScience');
@@ -50,6 +51,7 @@ export interface IJupyterExecution {
     startNotebookServer() : Promise<INotebookServer>;
     spawnNotebook(file: string) : Promise<void>;
     importNotebook(file: string, template: string) : Promise<string>;
+    getUsableJupyterPython() : Promise<PythonInterpreter>;
 }
 
 export interface IJupyterKernelSpec {
@@ -125,6 +127,7 @@ export interface ICell {
 export interface ISysInfo extends nbformat.IBaseCell {
     cell_type: 'sys_info';
     version: string;
+    notebook_version: string;
     path: string;
     message: string;
 }

@@ -422,9 +422,12 @@ export class History implements IWebPanelMessageListener, IHistory {
         const versionCells = await this.jupyterServer.execute(`import sys\r\nsys.version`, 'foo.py', 0);
         // tslint:disable-next-line:no-multiline-string
         const pathCells = await this.jupyterServer.execute(`import sys\r\nsys.executable`, 'foo.py', 0);
+        // tslint:disable-next-line:no-multiline-string
+        const notebookVersionCells = await this.jupyterServer.execute(`import notebook\r\nnotebook.version_info`, 'foo.py', 0);
 
         // Both should have streamed output
         const version = versionCells.length > 0 ? this.extractStreamOutput(versionCells[0]).trimQuotes() : '';
+        const notebookVersion = notebookVersionCells.length > 0 ? this.extractStreamOutput(notebookVersionCells[0]).trimQuotes() : '';
         const pythonPath = versionCells.length > 0 ? this.extractStreamOutput(pathCells[0]).trimQuotes() : '';
 
         // Both should influence our ignore count. We don't want them to count against execution
@@ -436,6 +439,7 @@ export class History implements IWebPanelMessageListener, IHistory {
                 cell_type : 'sys_info',
                 message: message,
                 version: version,
+                notebook_version: localize.DataScience.notebookVersionFormat().format(notebookVersion),
                 path: pythonPath,
                 metadata : {},
                 source : []
@@ -488,12 +492,20 @@ export class History implements IWebPanelMessageListener, IHistory {
     }
 
     private load = async () : Promise<void> => {
-        // Check to see if we support jupyter or not. If not quick fail
-        if (!(await this.jupyterExecution.isNotebookSupported())) {
+        // Check to see if we support ipykernel or not
+        const usableInterpreter = await this.jupyterExecution.getUsableJupyterPython();
+        if (!usableInterpreter) {
+            // Nobody is useable, throw an exception
             throw new JupyterInstallError(localize.DataScience.jupyterNotSupported(), localize.DataScience.pythonInteractiveHelpLink());
+        } else {
+            // See if the usable interpreter is not our active one. If so, show a warning
+            const active = await this.interpreterService.getActiveInterpreter();
+            if (active && active.path !== usableInterpreter.path) {
+                this.applicationShell.showWarningMessage(localize.DataScience.jupyterKernelNotSupportedOnActive().format(active.displayName, usableInterpreter.displayName));
+            }
         }
 
-        // Otherwise wait for both
+        // Otherwise we continue loading
         await Promise.all([this.loadJupyterServer(), this.loadWebPanel()]);
     }
 }
